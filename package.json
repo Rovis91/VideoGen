@@ -1,7 +1,7 @@
 {
   "name": "ad-video-generator",
   "version": "0.1.0",
-  "description": "Ad Video Generator — generate short ad videos from a product image (Google AI)",
+  "description": "Ad Video Generator — generate short ad videos from a product image (KIE AI)",
   "author": "Ad Video Generator",
   "license": "MIT",
   "scripts": {
@@ -10,7 +10,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^1.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

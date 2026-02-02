@@ -92,7 +92,10 @@ export async function generateIdeas(opts) {
   ideasAbortController = null;
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || `API error ${res.status}`);
+    const msg = res.status === 404
+      ? 'API non disponible en local. Lancez "vercel dev" pour tester.'
+      : (data.error || `API error ${res.status}`);
+    throw new Error(msg);
   }
   const data = await res.json();
   return data.ideas;
@@ -128,7 +131,10 @@ export async function generateVideo(opts) {
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || `API error ${res.status}`);
+    const msg = res.status === 404
+      ? 'API non disponible en local. Lancez "vercel dev" pour tester.'
+      : (data.error || `API error ${res.status}`);
+    throw new Error(msg);
   }
   const blob = await res.blob();
   const disposition = res.headers.get('Content-Disposition');
@@ -144,6 +150,12 @@ export async function testApiKey(apiKey) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ apiKey: (apiKey || '').trim() }),
   });
+  if (res.status === 404) {
+    return {
+      ok: false,
+      error: 'API non disponible en local. Lancez "vercel dev" (au lieu de "npm run dev") pour tester la clé.',
+    };
+  }
   const data = await res.json().catch(() => ({ ok: false, error: 'Erreur réseau.' }));
   return data;
 }

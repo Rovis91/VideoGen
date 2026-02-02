@@ -1,7 +1,7 @@
 const { generateIdeas } = require('../ideas');
 
 function getApiKey(req) {
-  const envKey = process.env.GOOGLE_API_KEY;
+  const envKey = process.env.KIE_API_KEY || process.env.GOOGLE_API_KEY;
   if (envKey && envKey.trim()) return envKey.trim();
   const body = req.body || {};
   const key = (body.apiKey || '').trim();
@@ -17,7 +17,7 @@ module.exports = async function handler(req, res) {
 
   const apiKey = getApiKey(req);
   if (!apiKey) {
-    return res.status(400).json({ error: 'No API key. Set GOOGLE_API_KEY or send apiKey in body.' });
+    return res.status(400).json({ error: 'No API key. Set KIE_API_KEY or send apiKey in body.' });
   }
 
   try {

@@ -102,7 +102,7 @@ export default function App() {
   const [imageError, setImageError] = useState('');
   const [optionalIdea, setOptionalIdea] = useState('');
   const [duration, setDuration] = useState(10);
-  const [veoModel, setVeoModel] = useState('veo-3.1-generate-preview');
+  const [veoModel, setVeoModel] = useState('veo3');
   const [ideas, setIdeas] = useState([]);
   const [selectedIndices, setSelectedIndices] = useState(new Set());
   const [ideasLoading, setIdeasLoading] = useState(false);
@@ -122,7 +122,10 @@ export default function App() {
     setIdeaPrompt(cfg.ideaGenerationPrompt != null && cfg.ideaGenerationPrompt !== '' ? cfg.ideaGenerationPrompt : DEFAULT_IDEA_PROMPT);
     setVideoPrompt(cfg.videoGenerationPrompt != null && cfg.videoGenerationPrompt !== '' ? cfg.videoGenerationPrompt : DEFAULT_VIDEO_PROMPT);
     if (cfg.defaultDurationSeconds) setDuration(cfg.defaultDurationSeconds);
-    if (cfg.veoModel) setVeoModel(cfg.veoModel);
+    if (cfg.veoModel) {
+      const m = cfg.veoModel;
+      setVeoModel((m === 'veo3_fast' || m === 'veo-3.1-generate') ? 'veo3_fast' : 'veo3');
+    }
     setHasApiKey(!!(cfg.googleApiKey && cfg.googleApiKey.trim()));
   }, []);
 
@@ -257,7 +260,7 @@ export default function App() {
     setGenerationLoading(true);
     const cfg = adgen.getConfig();
     if (!cfg?.googleApiKey?.trim()) {
-      setGenerationError('Clé API manquante. Allez dans Configuration pour saisir une clé Google.');
+      setGenerationError('Clé API manquante. Allez dans Configuration pour saisir votre clé KIE.');
       setGenerationLoading(false);
       return;
     }
@@ -325,11 +328,11 @@ export default function App() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="api-key">Clé API Google</Label>
+              <Label htmlFor="api-key">Clé API KIE</Label>
               <Input
                 id="api-key"
                 type="password"
-                placeholder="Collez votre clé API Google"
+                placeholder="Collez votre clé API KIE (kie.ai/api-key)"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 autoComplete="off"
@@ -438,8 +441,8 @@ export default function App() {
                   adgen.saveConfig({ veoModel: v });
                 }}
               >
-                <option value="veo-3.1-generate-preview">Veo 3.1 Preview</option>
-                <option value="veo-3.1-generate">Veo 3.1 Pro</option>
+                <option value="veo3">Veo 3.1 Quality</option>
+                <option value="veo3_fast">Veo 3.1 Fast</option>
               </Select>
             </div>
             <Button onClick={handleGenerateIdeas} disabled={!imageFile || ideasLoading}>
@@ -494,7 +497,7 @@ export default function App() {
           <CardContent className="space-y-4">
             {!hasApiKey && (
               <div className="rounded-md p-4 bg-red-50 border border-red-200 text-red-700 text-sm">
-                <strong>Clé API manquante.</strong> Allez dans <button type="button" className="underline font-medium" onClick={() => setScreen(SCREENS.setup)}>Configuration</button> pour saisir votre clé Google.
+                <strong>Clé API manquante.</strong> Allez dans <button type="button" className="underline font-medium" onClick={() => setScreen(SCREENS.setup)}>Configuration</button> pour saisir votre clé KIE.
               </div>
             )}
             {hasApiKey && generationLoading && (

@@ -1,13 +1,10 @@
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const kie = require('./lib/kie');
 
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
-const POLL_INTERVAL_MS = 10000;
-const DEFAULT_MODEL = 'veo-3.1-generate-preview';
+const POLL_INTERVAL_MS = 30000;
+const DEFAULT_MODEL = 'veo3';
 const VEO_MODELS = {
-  'veo-3.1-generate-preview': 'Veo 3.1 Preview',
-  'veo-3.1-generate': 'Veo 3.1 Pro',
+  veo3: 'Veo 3.1 Quality',
+  veo3_fast: 'Veo 3.1 Fast',
 };
 
 const DEFAULT_VIDEO_PROMPT_SYSTEM = `You are a video director generating a prompt for a short social media video.
@@ -47,29 +44,11 @@ async function ideaToVideoPrompt({ apiKey, ideaConcept, durationSeconds, systemP
   const idea = (ideaConcept || '').trim() || 'Short promotional video for the product.';
   const userPrompt = `Ad idea: ${idea}\nVideo duration: ${durationSeconds ?? 8} seconds.\nGenerate the video prompt.`;
   const systemPrompt = (systemPromptOverride && systemPromptOverride.trim()) ? systemPromptOverride.trim() : DEFAULT_VIDEO_PROMPT_SYSTEM;
-  const res = await fetch(`${GEMINI_URL}?key=${encodeURIComponent(apiKey.trim())}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
-      generationConfig: { temperature: 0.5, maxOutputTokens: 1024 },
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(res.status === 401 ? 'Invalid API key.' : err || `API error ${res.status}`);
-  }
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text || !text.trim()) throw new Error('No video prompt from idea step.');
-  return text.trim();
-}
-
-function durationToVeo(durationSeconds) {
-  const n = Number(durationSeconds) || 8;
-  if (n <= 4) return 4;
-  if (n <= 6) return 6;
-  return 8;
+  const fullText = systemPrompt + '\n\n' + userPrompt;
+  const messages = [{ role: 'user', content: fullText }];
+  const content = await kie.chatCompletion(apiKey, messages, { stream: false });
+  if (!content || !content.trim()) throw new Error('No video prompt from idea step.');
+  return content.trim();
 }
 
 async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, ideaConcept, index, durationSeconds, veoModel }) {
@@ -80,10 +59,7 @@ async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, id
     systemPromptOverride: (videoPrompt || '').trim() || undefined,
   });
 
-  const { GoogleGenAI } = await import('@google/genai');
-  const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
-
-  const resolvedMime = (mimeType && mimeType.trim()) || 'image/jpeg';
+  const imageUrl = await kie.uploadImage(apiKey, imageBase64, mimeType, `product-${Date.now()}.jpg`);
 
   const prompt = [
     'The attached image is the product image (image produit).',
@@ -92,41 +68,41 @@ async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, id
     optimizedPrompt,
   ].join('\n');
 
-  const config = {
-    durationSeconds: durationToVeo(durationSeconds ?? 8),
-    aspectRatio: '16:9',
-  };
-
   const model = (veoModel && VEO_MODELS[veoModel]) ? veoModel : DEFAULT_MODEL;
-  let operation = await ai.models.generateVideos({
-    model,
+  const taskId = await kie.veoGenerate(apiKey, {
     prompt,
-    image: { imageBytes: imageBase64, mimeType: resolvedMime },
-    config,
+    imageUrls: [imageUrl],
+    model,
+    aspect_ratio: '16:9',
+    generationType: 'FIRST_AND_LAST_FRAMES_2_VIDEO',
   });
 
-  while (!operation.done) {
+  let data;
+  while (true) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-    operation = await ai.operations.getVideosOperation({ operation });
+    data = await kie.veoRecordInfo(apiKey, taskId);
+    if (data.successFlag === 1) break;
+    if (data.successFlag === 2 || data.successFlag === 3) {
+      throw new Error(data.failMsg || data.msg || 'Video generation failed.');
+    }
   }
 
-  if (!operation.response?.generatedVideos?.[0]?.video) {
-    throw new Error('Aucune vidéo dans la réponse.');
-  }
+  const resultUrls = data.resultUrls;
+  if (!resultUrls) throw new Error('Aucune vidéo dans la réponse.');
+  const urls = typeof resultUrls === 'string' ? JSON.parse(resultUrls) : resultUrls;
+  const videoUrl = Array.isArray(urls) ? urls[0] : urls;
+  if (!videoUrl) throw new Error('No video URL in result.');
 
-  const fileName = `ad_${(index ?? 0) + 1}.mp4`;
-  const downloadPath = path.join(os.tmpdir(), fileName);
-
-  await ai.files.download({
-    file: operation.response.generatedVideos[0].video,
-    downloadPath,
-  });
-
-  const buffer = fs.readFileSync(downloadPath);
+  let downloadUrl = videoUrl;
   try {
-    fs.unlinkSync(downloadPath);
+    downloadUrl = await kie.getDownloadUrl(apiKey, videoUrl);
   } catch (_) {}
 
+  const res = await fetch(downloadUrl);
+  if (!res.ok) throw new Error(`Video download failed: ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+
+  const fileName = `ad_${(index ?? 0) + 1}.mp4`;
   return { ok: true, buffer, filename: fileName };
 }
 

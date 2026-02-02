@@ -1,4 +1,4 @@
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+const kie = require('./lib/kie');
 
 let currentAbortController = null;
 
@@ -45,46 +45,29 @@ function buildUserPrompt(optionalText, durationSeconds) {
 }
 
 async function generateIdeas({ apiKey, imageBase64, mimeType, optionalText, durationSeconds, ideaPrompt, signal }) {
-  const resolvedMime = (mimeType && mimeType.trim()) || 'image/jpeg';
   const systemPrompt = (ideaPrompt && ideaPrompt.trim()) ? ideaPrompt.trim() : DEFAULT_IDEA_PROMPT;
   const userPrompt = buildUserPrompt(optionalText, durationSeconds);
+  const fullText = systemPrompt + '\n\n' + userPrompt;
 
   currentAbortController = new AbortController();
   const reqSignal = signal || currentAbortController.signal;
 
-  const body = {
-    contents: [{
-      parts: [
-        { inline_data: { mime_type: resolvedMime, data: imageBase64 } },
-        { text: systemPrompt + '\n\n' + userPrompt },
+  const imageUrl = await kie.uploadImage(apiKey, imageBase64, mimeType, `product-${Date.now()}.jpg`);
+
+  const messages = [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: fullText },
+        { type: 'image_url', image_url: { url: imageUrl } },
       ],
-    }],
-    generationConfig: {
-      response_mime_type: 'application/json',
-      temperature: 0.7,
     },
-  };
+  ];
 
-  const url = `${GEMINI_URL}?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: reqSignal,
-  });
-
+  const content = await kie.chatCompletion(apiKey, messages, { stream: false }, reqSignal);
   currentAbortController = null;
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(res.status === 401 ? 'Invalid API key.' : err || `API error ${res.status}`);
-  }
-
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('No ideas in API response.');
-
-  let raw = text.trim();
+  let raw = (content || '').trim();
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (jsonMatch) raw = jsonMatch[0];
   const ideas = JSON.parse(raw);
