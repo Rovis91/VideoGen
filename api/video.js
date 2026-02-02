@@ -22,7 +22,7 @@ module.exports = async function handler(req, res) {
 
   try {
     const body = req.body || {};
-    const { imageBase64, mimeType, videoPrompt, ideaConcept, durationSeconds, index } = body;
+    const { imageBase64, mimeType, videoPrompt, ideaConcept, durationSeconds, index, veoModel } = body;
     if (!imageBase64) {
       return res.status(400).json({ error: 'Missing imageBase64 in body.' });
     }
@@ -38,6 +38,7 @@ module.exports = async function handler(req, res) {
       ideaConcept: ideaConcept || '',
       index: index ?? 0,
       durationSeconds: durationSeconds ?? 8,
+      veoModel: veoModel || undefined,
     });
 
     res.setHeader('Content-Type', 'video/mp4');

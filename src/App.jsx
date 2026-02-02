@@ -102,6 +102,7 @@ export default function App() {
   const [imageError, setImageError] = useState('');
   const [optionalIdea, setOptionalIdea] = useState('');
   const [duration, setDuration] = useState(10);
+  const [veoModel, setVeoModel] = useState('veo-3.1-generate-preview');
   const [ideas, setIdeas] = useState([]);
   const [selectedIndices, setSelectedIndices] = useState(new Set());
   const [ideasLoading, setIdeasLoading] = useState(false);
@@ -121,6 +122,7 @@ export default function App() {
     setIdeaPrompt(cfg.ideaGenerationPrompt != null && cfg.ideaGenerationPrompt !== '' ? cfg.ideaGenerationPrompt : DEFAULT_IDEA_PROMPT);
     setVideoPrompt(cfg.videoGenerationPrompt != null && cfg.videoGenerationPrompt !== '' ? cfg.videoGenerationPrompt : DEFAULT_VIDEO_PROMPT);
     if (cfg.defaultDurationSeconds) setDuration(cfg.defaultDurationSeconds);
+    if (cfg.veoModel) setVeoModel(cfg.veoModel);
     setHasApiKey(!!(cfg.googleApiKey && cfg.googleApiKey.trim()));
   }, []);
 
@@ -281,6 +283,7 @@ export default function App() {
           index: idx,
           durationSeconds: duration,
           apiKey: (cfg.googleApiKey || '').trim() || undefined,
+          veoModel: veoModel || undefined,
         });
         anyDone = true;
         setShowOpenFolder(true);
@@ -422,6 +425,21 @@ export default function App() {
                 <option value={10}>10</option>
                 <option value={15}>15</option>
                 <option value={20}>20</option>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="veo-model">Modèle Veo 3</Label>
+              <Select
+                id="veo-model"
+                value={veoModel}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setVeoModel(v);
+                  adgen.saveConfig({ veoModel: v });
+                }}
+              >
+                <option value="veo-3.1-generate-preview">Veo 3.1 Preview</option>
+                <option value="veo-3.1-generate">Veo 3.1 Pro</option>
               </Select>
             </div>
             <Button onClick={handleGenerateIdeas} disabled={!imageFile || ideasLoading}>

@@ -4,7 +4,11 @@ const os = require('os');
 
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 const POLL_INTERVAL_MS = 10000;
-const MODEL = 'veo-3.1-generate-preview';
+const DEFAULT_MODEL = 'veo-3.1-generate-preview';
+const VEO_MODELS = {
+  'veo-3.1-generate-preview': 'Veo 3.1 Preview',
+  'veo-3.1-generate': 'Veo 3.1 Pro',
+};
 
 const DEFAULT_VIDEO_PROMPT_SYSTEM = `You are a video director generating a prompt for a short social media video.
 
@@ -68,7 +72,7 @@ function durationToVeo(durationSeconds) {
   return 8;
 }
 
-async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, ideaConcept, index, durationSeconds }) {
+async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, ideaConcept, index, durationSeconds, veoModel }) {
   const optimizedPrompt = await ideaToVideoPrompt({
     apiKey,
     ideaConcept: ideaConcept || 'Short promotional video for the product.',
@@ -93,8 +97,9 @@ async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, id
     aspectRatio: '16:9',
   };
 
+  const model = (veoModel && VEO_MODELS[veoModel]) ? veoModel : DEFAULT_MODEL;
   let operation = await ai.models.generateVideos({
-    model: MODEL,
+    model,
     prompt,
     image: { imageBytes: imageBase64, mimeType: resolvedMime },
     config,
@@ -125,4 +130,4 @@ async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, id
   return { ok: true, buffer, filename: fileName };
 }
 
-module.exports = { generateOneVideo };
+module.exports = { generateOneVideo, VEO_MODELS, DEFAULT_MODEL };

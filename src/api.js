@@ -110,7 +110,7 @@ export function openFolder() {
 }
 
 export async function generateVideo(opts) {
-  const { imageBase64, mimeType, videoPrompt, ideaConcept, durationSeconds, index, apiKey } = opts;
+  const { imageBase64, mimeType, videoPrompt, ideaConcept, durationSeconds, index, apiKey, veoModel } = opts;
   const body = {
     imageBase64,
     mimeType: mimeType || 'image/jpeg',
@@ -119,6 +119,7 @@ export async function generateVideo(opts) {
     durationSeconds: durationSeconds ?? 8,
     index: index ?? 0,
     apiKey: apiKey || undefined,
+    veoModel: veoModel || undefined,
   };
   const res = await fetch(`${getBaseUrl()}/api/video`, {
     method: 'POST',
