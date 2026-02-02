@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
-const MIME_MAP = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' };
 const POLL_INTERVAL_MS = 10000;
 const MODEL = 'veo-3.1-generate-preview';
 
@@ -61,11 +61,6 @@ async function ideaToVideoPrompt({ apiKey, ideaConcept, durationSeconds, systemP
   return text.trim();
 }
 
-function getMimeType(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  return MIME_MAP[ext] || 'image/jpeg';
-}
-
 function durationToVeo(durationSeconds) {
   const n = Number(durationSeconds) || 8;
   if (n <= 4) return 4;
@@ -73,7 +68,7 @@ function durationToVeo(durationSeconds) {
   return 8;
 }
 
-async function generateOneVideo({ apiKey, imagePath, videoPrompt, ideaConcept, outputFolder, index, durationSeconds }) {
+async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, ideaConcept, index, durationSeconds }) {
   const optimizedPrompt = await ideaToVideoPrompt({
     apiKey,
     ideaConcept: ideaConcept || 'Short promotional video for the product.',
@@ -84,8 +79,7 @@ async function generateOneVideo({ apiKey, imagePath, videoPrompt, ideaConcept, o
   const { GoogleGenAI } = await import('@google/genai');
   const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
 
-  const imageBytes = fs.readFileSync(imagePath, { encoding: 'base64' });
-  const mimeType = getMimeType(imagePath);
+  const resolvedMime = (mimeType && mimeType.trim()) || 'image/jpeg';
 
   const prompt = [
     'The attached image is the product image (image produit).',
@@ -102,7 +96,7 @@ async function generateOneVideo({ apiKey, imagePath, videoPrompt, ideaConcept, o
   let operation = await ai.models.generateVideos({
     model: MODEL,
     prompt,
-    image: { imageBytes, mimeType },
+    image: { imageBytes: imageBase64, mimeType: resolvedMime },
     config,
   });
 
@@ -115,21 +109,20 @@ async function generateOneVideo({ apiKey, imagePath, videoPrompt, ideaConcept, o
     throw new Error('Aucune vidéo dans la réponse.');
   }
 
-  let fileName = `ad_${index + 1}.mp4`;
-  let downloadPath = path.join(outputFolder, fileName);
-  let n = 0;
-  while (fs.existsSync(downloadPath)) {
-    n++;
-    fileName = `ad_${index + 1}_${n}.mp4`;
-    downloadPath = path.join(outputFolder, fileName);
-  }
+  const fileName = `ad_${(index ?? 0) + 1}.mp4`;
+  const downloadPath = path.join(os.tmpdir(), fileName);
 
   await ai.files.download({
     file: operation.response.generatedVideos[0].video,
     downloadPath,
   });
 
-  return { ok: true, path: downloadPath };
+  const buffer = fs.readFileSync(downloadPath);
+  try {
+    fs.unlinkSync(downloadPath);
+  } catch (_) {}
+
+  return { ok: true, buffer, filename: fileName };
 }
 
 module.exports = { generateOneVideo };

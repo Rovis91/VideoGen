@@ -1,70 +1,49 @@
-# Ad Video Generator (Desktop App)
+# Ad Video Generator (Web)
 
 Generate short ad videos (5–20s) from a single product image using Google AI.  
-**Platforms:** macOS, Windows.
+Deploy as a web app on Vercel.
 
-## Run (development)
+## Setup
 
-- **Requires:** Node.js and npm (for building only; end users do not install these).
-- Install and start:
-
-```powershell
-cd c:\Users\antoi\Documents\Netechoppe\VideoGen
-npm install
-npm start
-```
-
-## Package (executables for Windows and Mac)
-
-The project uses **Electron Forge** to build installers and portable builds.
-
-1. **Install dependencies** (includes Forge and makers):
+1. **Clone and install:**
 
 ```powershell
-cd c:\Users\antoi\Documents\Netechoppe\VideoGen
 npm install
 ```
 
-2. **Build executables:**
+2. **Run locally:**
 
 ```powershell
-npm run make
+npm run dev
 ```
 
-This runs `vite build` (so the renderer is up to date), then packages the app and runs the makers. Output goes to `out/`:
+Then open http://localhost:5173. For a production build:
 
-- **Windows:**  
-  - `out/ad-video-generator-win32-x64/` — unpacked app (run `ad-video-generator.exe`).  
-  - `out/make/squirrel.windows/x64/` — Squirrel installer (`.exe`).  
-  - `out/make/zip/win32/x64/` — portable ZIP.
-- **macOS:**  
-  - **One-file for users:** `out/make/dmg/` — **.dmg** disk image. User downloads this single file, opens it, then drags “Ad Video Generator” to Applications (or runs it from the DMG).  
-  - The app: `out/Ad Video Generator-darwin-arm64/Ad Video Generator.app` (Apple Silicon) or `…-x64/…` (Intel).  
-  - Optional: `out/make/zip/darwin/` — ZIP of the .app.
+```powershell
+npm run build
+npm run preview
+```
 
-**Getting the macOS build without a Mac:**  
-macOS .app and .dmg can only be built on macOS. The repo includes a **GitHub Actions** workflow that builds both Windows and macOS when you push. To get the macOS one-file for users: (1) Push this project to a GitHub repo. (2) Open the repo → **Actions** → workflow **"Build (Windows + macOS)"**. (3) Run it (on push to `main`/`master` it runs automatically; or use **Run workflow**). (4) When it finishes, download the **ad-video-generator-darwin** artifact — it contains `out/make/dmg/` (the .dmg for users) and the .app folder.
+## Deploy on Vercel
 
-**Building locally:** On Windows, `npm run make` produces only Windows executables. On a Mac, `npm run make` produces only the macOS .dmg and .app.
+1. Push the repo to GitHub and import the project in [Vercel](https://vercel.com).
+2. (Optional) Set **Environment variable** `GOOGLE_API_KEY` in the Vercel dashboard. If set, the app uses this key and users do not need to enter one. If not set, users must paste their own Google API key in the Configuration screen.
+3. Deploy. The frontend is served from the Vite build; API routes live under `/api` (ideas, video, config, test-key).
 
-**Why can't I build macOS on Windows?**  
-Apple’s toolchain and code signing only run on macOS; there is no supported way to cross-compile a macOS Electron app on Windows. Your options from a Windows PC are: **(1) GitHub Actions** (free for this repo: push to GitHub, run the workflow, download the macOS artifact); **(2) rent a cloud Mac** (e.g. [MacinCloud](https://www.macincloud.com/), [MacStadium](https://www.macstadium.com/)) and run `npm run make` there via RDP/SSH; **(3) use a real Mac** (your own or a friend’s).
-
-End users run the packaged app; they do not need Node.js or any other runtime.
+**Note:** Video generation can take 1–3+ minutes. On Vercel Pro, `api/video.js` is configured with `maxDuration: 300` (5 minutes). On Hobby plan the function may timeout; use Pro or reduce concurrency.
 
 ## First run
 
-1. Paste your **Google API key** on the Setup screen and click Save.
-2. On Input: select a **product image** (JPEG/PNG/WebP, max 10 MB), optional text idea, duration, and **output folder**.
-3. Click **Generate Ideas** → exactly 10 ideas appear (read-only).
-4. Select one or more ideas → **Generate Videos** (video generation is placeholder until Nano Banana API is wired).
+1. On **Configuration**: paste your **Google API key** (or rely on the server key if `GOOGLE_API_KEY` is set) and click Save.
+2. On **Entrée**: select a **product image** (JPEG/PNG/WebP, max 10 MB), optional text idea, and duration.
+3. Click **Générer les idées** → 10 ideas appear. Select one or more → **Générer les vidéos**.
+4. When each video is ready, use the **Télécharger** link to save it (no output folder; download per video).
 
-## Config
+## Config (browser)
 
-Stored at `~/.adgen/config.json` (Windows: `%USERPROFILE%\.adgen\config.json`).  
-Contains: `googleApiKey`, `lastOutputFolder`, `defaultDurationSeconds`.
+Stored in `localStorage` under key `adgen_config`. Contains: `googleApiKey`, `ideaGenerationPrompt`, `videoGenerationPrompt`, `defaultDurationSeconds`. Reset buttons restore the default prompts.
 
 ## Spec and TODO
 
 - Product and engineering spec: `docs/AD_VIDEO_GENERATOR_SPEC.md`
-- Implementation checklist and log: `TODO.md`
+- Implementation checklist: `TODO.md`

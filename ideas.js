@@ -1,15 +1,6 @@
-const fs = require('fs');
-const path = require('path');
-
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
-const MIME_MAP = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' };
 
 let currentAbortController = null;
-
-function getMimeType(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  return MIME_MAP[ext] || 'image/jpeg';
-}
 
 const DEFAULT_IDEA_PROMPT = `You are an expert social media ad strategist for short-form video ads.
 
@@ -53,9 +44,8 @@ function buildUserPrompt(optionalText, durationSeconds) {
   return p;
 }
 
-async function generateIdeas({ apiKey, imagePath, optionalText, durationSeconds, ideaPrompt, signal }) {
-  const mimeType = getMimeType(imagePath);
-  const imageBase64 = fs.readFileSync(imagePath, { encoding: 'base64' });
+async function generateIdeas({ apiKey, imageBase64, mimeType, optionalText, durationSeconds, ideaPrompt, signal }) {
+  const resolvedMime = (mimeType && mimeType.trim()) || 'image/jpeg';
   const systemPrompt = (ideaPrompt && ideaPrompt.trim()) ? ideaPrompt.trim() : DEFAULT_IDEA_PROMPT;
   const userPrompt = buildUserPrompt(optionalText, durationSeconds);
 
@@ -65,7 +55,7 @@ async function generateIdeas({ apiKey, imagePath, optionalText, durationSeconds,
   const body = {
     contents: [{
       parts: [
-        { inline_data: { mime_type: mimeType, data: imageBase64 } },
+        { inline_data: { mime_type: resolvedMime, data: imageBase64 } },
         { text: systemPrompt + '\n\n' + userPrompt },
       ],
     }],

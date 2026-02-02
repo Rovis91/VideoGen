@@ -2,15 +2,12 @@
   "name": "ad-video-generator",
   "version": "0.1.0",
   "description": "Ad Video Generator — generate short ad videos from a product image (Google AI)",
-  "main": "main.js",
   "author": "Ad Video Generator",
   "license": "MIT",
   "scripts": {
     "build": "vite build",
-    "start": "vite build && electron .",
-    "dev": "vite build && electron .",
-    "package": "npm run build && electron-forge package",
-    "make": "npm run build && electron-forge make"
+    "dev": "vite",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@google/genai": "^1.0.0",
@@ -18,13 +15,8 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@electron-forge/cli": "^7.2.0",
-    "@electron-forge/maker-dmg": "^7.2.0",
-    "@electron-forge/maker-squirrel": "^7.2.0",
-    "@electron-forge/maker-zip": "^7.2.0",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
-    "electron": "^33.0.0",
     "tailwindcss": "^3.4.17",
     "vite": "^6.0.3"
   }

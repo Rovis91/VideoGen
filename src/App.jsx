@@ -6,6 +6,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import * as adgen from './api';
+import { fileToBase64 } from './api';
 
 const SCREENS = { setup: 'setup', input: 'input', ideas: 'ideas', generation: 'generation' };
 
@@ -95,12 +97,11 @@ export default function App() {
   const [setupError, setSetupError] = useState('');
   const [setupSaving, setSetupSaving] = useState(false);
 
-  const [imagePath, setImagePath] = useState(null);
+  const [imageFile, setImageFile] = useState(null);
   const [imageName, setImageName] = useState('');
   const [imageError, setImageError] = useState('');
   const [optionalIdea, setOptionalIdea] = useState('');
   const [duration, setDuration] = useState(10);
-  const [outputFolder, setOutputFolder] = useState('');
   const [ideas, setIdeas] = useState([]);
   const [selectedIndices, setSelectedIndices] = useState(new Set());
   const [ideasLoading, setIdeasLoading] = useState(false);
@@ -114,33 +115,27 @@ export default function App() {
   const [apiKeyTestResult, setApiKeyTestResult] = useState(null);
   const [apiKeyTesting, setApiKeyTesting] = useState(false);
 
-  const adgen = window.adgen;
+  useEffect(() => {
+    const cfg = adgen.getConfig();
+    if (cfg.googleApiKey) setApiKey(cfg.googleApiKey);
+    setIdeaPrompt(cfg.ideaGenerationPrompt != null && cfg.ideaGenerationPrompt !== '' ? cfg.ideaGenerationPrompt : DEFAULT_IDEA_PROMPT);
+    setVideoPrompt(cfg.videoGenerationPrompt != null && cfg.videoGenerationPrompt !== '' ? cfg.videoGenerationPrompt : DEFAULT_VIDEO_PROMPT);
+    if (cfg.defaultDurationSeconds) setDuration(cfg.defaultDurationSeconds);
+    setHasApiKey(!!(cfg.googleApiKey && cfg.googleApiKey.trim()));
+  }, []);
 
   useEffect(() => {
-    if (!adgen) return;
-    adgen.getConfig().then((cfg) => {
-      if (cfg.googleApiKey) setApiKey(cfg.googleApiKey);
-      setIdeaPrompt(cfg.ideaGenerationPrompt != null && cfg.ideaGenerationPrompt !== '' ? cfg.ideaGenerationPrompt : DEFAULT_IDEA_PROMPT);
-      setVideoPrompt(cfg.videoGenerationPrompt != null && cfg.videoGenerationPrompt !== '' ? cfg.videoGenerationPrompt : DEFAULT_VIDEO_PROMPT);
-      if (cfg.defaultDurationSeconds) setDuration(cfg.defaultDurationSeconds);
-      if (cfg.lastOutputFolder) setOutputFolder(cfg.lastOutputFolder);
-      setHasApiKey(!!(cfg.googleApiKey && cfg.googleApiKey.trim()));
-    });
-  }, [adgen]);
+    const cfg = adgen.getConfig();
+    if (cfg.googleApiKey && cfg.googleApiKey.trim()) {
+      setScreen(SCREENS.input);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!adgen) return;
-    adgen.getConfig().then((cfg) => {
-      if (cfg.googleApiKey) {
-        setScreen(SCREENS.input);
-      }
-    });
-  }, [adgen]);
-
-  useEffect(() => {
-    if (!adgen || screen !== SCREENS.generation) return;
-    adgen.getConfig().then((cfg) => setHasApiKey(!!(cfg?.googleApiKey?.trim())));
-  }, [adgen, screen]);
+    if (screen !== SCREENS.generation) return;
+    const cfg = adgen.getConfig();
+    setHasApiKey(!!(cfg?.googleApiKey?.trim()));
+  }, [screen]);
 
   async function handleSetupSave() {
     setSetupError('');
@@ -183,25 +178,18 @@ export default function App() {
   }
 
   async function handlePickImage() {
-    const path = await adgen.openImageFile();
-    if (!path) return;
-    const result = await adgen.validateImage(path);
+    const file = await adgen.openImageFile();
+    if (!file) return;
+    const result = adgen.validateImage(file);
     if (!result.ok) {
       setImageError(result.error);
-      setImagePath(null);
+      setImageFile(null);
       setImageName('');
     } else {
-      setImagePath(path);
+      setImageFile(file);
       setImageError('');
-      setImageName(path.split(/[/\\]/).pop());
+      setImageName(file.name);
     }
-  }
-
-  async function handlePickFolder() {
-    const path = await adgen.openOutputFolder();
-    if (!path) return;
-    setOutputFolder(path);
-    await adgen.saveConfig({ lastOutputFolder: path });
   }
 
   function handleDurationChange(e) {
@@ -211,7 +199,7 @@ export default function App() {
   }
 
   async function handleGenerateIdeas() {
-    if (!imagePath) return;
+    if (!imageFile) return;
     setIdeasLoading(true);
     setIdeasError('');
     await adgen.saveConfig({
@@ -219,11 +207,15 @@ export default function App() {
     });
     setScreen(SCREENS.ideas);
     try {
+      const imageBase64 = await fileToBase64(imageFile);
+      const cfg = adgen.getConfig();
       const list = await adgen.generateIdeas({
-        imagePath,
+        imageBase64,
+        mimeType: imageFile.type || 'image/jpeg',
         optionalText: optionalIdea,
         durationSeconds: duration,
         ideaPrompt: ideaPrompt || undefined,
+        apiKey: (cfg.googleApiKey || apiKey || '').trim() || undefined,
       });
       setIdeas(list);
       setSelectedIndices(new Set());
@@ -249,11 +241,7 @@ export default function App() {
 
   async function handleGenerateVideos() {
     if (selectedIndices.size === 0) return;
-    if (!outputFolder) {
-      alert('Veuillez choisir un dossier de sortie sur l\'écran Entrée.');
-      return;
-    }
-    if (!imagePath) {
+    if (!imageFile) {
       setGenerationError('Image produit manquante. Retournez à l\'écran Entrée.');
       return;
     }
@@ -265,12 +253,13 @@ export default function App() {
     setGenerationMessage('');
     setShowOpenFolder(false);
     setGenerationLoading(true);
-    const cfg = await adgen.getConfig();
+    const cfg = adgen.getConfig();
     if (!cfg?.googleApiKey?.trim()) {
       setGenerationError('Clé API manquante. Allez dans Configuration pour saisir une clé Google.');
       setGenerationLoading(false);
       return;
     }
+    const imageBase64 = await fileToBase64(imageFile);
     const selectedIdeas = Array.from(selectedIndices).map((i) => ideas[i]);
     const promptToSend = videoPrompt.trim() === DEFAULT_VIDEO_PROMPT.trim() ? '' : videoPrompt;
     const statuses = selectedIdeas.map(() => ({ status: 'pending', error: null }));
@@ -284,19 +273,20 @@ export default function App() {
         return next;
       });
       try {
-        await adgen.generateVideo({
-          imagePath,
-          outputFolder,
+        const result = await adgen.generateVideo({
+          imageBase64,
+          mimeType: imageFile.type || 'image/jpeg',
           videoPrompt: promptToSend,
           ideaConcept: formatIdeaDisplay(idea),
           index: idx,
           durationSeconds: duration,
+          apiKey: (cfg.googleApiKey || '').trim() || undefined,
         });
         anyDone = true;
         setShowOpenFolder(true);
         setVideoStatuses((prev) => {
           const next = [...prev];
-          next[idx] = { status: 'done', error: null };
+          next[idx] = { status: 'done', error: null, url: result.url, filename: result.filename };
           return next;
         });
       } catch (e) {
@@ -313,15 +303,7 @@ export default function App() {
       );
     }
     setGenerationLoading(false);
-    setGenerationMessage(anyDone ? 'Certaines vidéos ont été générées. Ouvrez le dossier pour les voir.' : '');
-  }
-
-  function handleOpenFolder() {
-    adgen.openFolder(outputFolder);
-  }
-
-  if (!adgen) {
-    return <div className="p-8">Chargement…</div>;
+    setGenerationMessage(anyDone ? 'Téléchargez les vidéos ci-dessous.' : '');
   }
 
   return (
@@ -442,14 +424,7 @@ export default function App() {
                 <option value={20}>20</option>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Dossier de sortie</Label>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={handlePickFolder}>Choisir un dossier</Button>
-                <span className="text-sm text-neutral-600 truncate flex-1">{outputFolder || '—'}</span>
-              </div>
-            </div>
-            <Button onClick={handleGenerateIdeas} disabled={!imagePath || ideasLoading}>
+            <Button onClick={handleGenerateIdeas} disabled={!imageFile || ideasLoading}>
               Générer les idées
             </Button>
           </CardContent>
@@ -513,7 +488,7 @@ export default function App() {
             {videoStatuses.length > 0 && (
               <ul className="space-y-2 text-sm">
                 {videoStatuses.map((item, i) => (
-                  <li key={i} className="flex items-center gap-2">
+                  <li key={i} className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium">Vidéo {i + 1} :</span>
                     {item.status === 'pending' && <span className="text-neutral-500">En attente</span>}
                     {item.status === 'loading' && (
@@ -522,7 +497,20 @@ export default function App() {
                         En cours…
                       </span>
                     )}
-                    {item.status === 'done' && <span className="text-green-600">✓ Terminé</span>}
+                    {item.status === 'done' && (
+                      <>
+                        <span className="text-green-600">✓ Terminé</span>
+                        {item.url && item.filename && (
+                          <a
+                            href={item.url}
+                            download={item.filename}
+                            className="text-blue-600 underline font-medium"
+                          >
+                            Télécharger {item.filename}
+                          </a>
+                        )}
+                      </>
+                    )}
                     {item.status === 'error' && (
                       <span className="text-red-600">✗ {item.error || 'Erreur'}</span>
                     )}
@@ -537,9 +525,6 @@ export default function App() {
             )}
             {hasApiKey && !generationLoading && generationMessage && (
               <p className="text-sm text-neutral-600">{generationMessage}</p>
-            )}
-            {showOpenFolder && (
-              <Button onClick={handleOpenFolder}>Ouvrir le dossier</Button>
             )}
           </CardContent>
         </Card>
