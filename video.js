@@ -87,11 +87,26 @@ async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, id
     }
   }
 
-  const resultUrls = data.resultUrls;
-  if (!resultUrls) throw new Error('Aucune vidéo dans la réponse.');
-  const urls = typeof resultUrls === 'string' ? JSON.parse(resultUrls) : resultUrls;
-  const videoUrl = Array.isArray(urls) ? urls[0] : urls;
-  if (!videoUrl) throw new Error('No video URL in result.');
+  const resultUrls = data.response?.resultUrls ?? data.resultUrls;
+  let videoUrl = null;
+  if (resultUrls) {
+    const urls = typeof resultUrls === 'string' ? (() => { try { return JSON.parse(resultUrls); } catch { return resultUrls; } })() : resultUrls;
+    videoUrl = Array.isArray(urls) ? urls[0] : urls;
+  }
+  if (!videoUrl) {
+    const poll1080IntervalMs = 25000;
+    const poll1080MaxAttempts = 12;
+    for (let attempt = 0; attempt < poll1080MaxAttempts; attempt++) {
+      try {
+        videoUrl = await kie.veoGet1080pVideo(apiKey, taskId);
+        break;
+      } catch (e) {
+        if (attempt === poll1080MaxAttempts - 1) throw e;
+        await new Promise((r) => setTimeout(r, poll1080IntervalMs));
+      }
+    }
+  }
+  if (!videoUrl) throw new Error('Aucune vidéo dans la réponse.');
 
   let downloadUrl = videoUrl;
   try {
