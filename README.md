@@ -31,7 +31,19 @@ npm run preview
 2. (Optional) Set **Environment variable** `KIE_API_KEY` in the Vercel dashboard (get your key at [kie.ai/api-key](https://kie.ai/api-key)). If set, the app uses this key and users do not need to enter one. If not set, users must paste their KIE API key in the Configuration screen.
 3. Deploy. The frontend is served from the Vite build; API routes live under `/api` (ideas, video, config, test-key).
 
-**Note:** Video generation is async on KIE (2–5+ minutes). On Vercel Pro, `api/video.js` is configured with `maxDuration: 300` (5 minutes). KIE Veo models: **veo3** (Quality) and **veo3_fast** (Fast).
+**Note:** Video generation is async on KIE (2–5+ minutes). On Vercel Pro, `api/video.js` is configured with `maxDuration: 300` (5 minutes).
+
+### Modèles vidéo – entrées requises (doc KIE)
+
+| Modèle | Images (min–max) | Vidéos (min–max) | Types / contraintes |
+|--------|------------------|------------------|----------------------|
+| **Veo 3.1** (veo3, veo3_fast) | 1–2 | 0 | 1 image = frame unique ; 2 images = 1ère + dernière frame (transition). JPEG/PNG/WEBP, 10 MB. |
+| **Sora 2 Pro (Image)** | 1 | 0 | image_urls : 1 image (first frame). JPEG/PNG/WEBP, 10 MB. |
+| **Sora 2 Pro (Text)** | 0 | 0 | Prompt uniquement. |
+| **Kling 2.6 (Image)** | 1 | 0 | image_urls : 1 image. JPEG/PNG/WEBP, 10 MB. |
+| **Kling 2.6 Motion Control** | 1 | 1 | input_urls : 1 image. video_urls : 1 vidéo (3–30 s, 100 MB). MP4/MOV/MKV. |
+
+L’interface vérifie ces exigences : si les fichiers ne correspondent pas au modèle sélectionné, un message d’erreur s’affiche et le bouton « Générer les vidéos » est désactivé.
 
 ## First run
 

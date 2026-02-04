@@ -10,6 +10,37 @@ import * as adgen from './api';
 import { fileToBase64 } from './api';
 
 const SCREENS = { setup: 'setup', input: 'input', ideas: 'ideas', generation: 'generation' };
+const MOTION_CONTROL_MODEL = 'kling-2.6/motion-control';
+
+/** Exigences d’entrée par modèle (aligné avec la doc KIE). imageMin/Max, videoMin/Max = nombre de fichiers. */
+const MODEL_INPUT_REQUIREMENTS = {
+  veo3: { imageMin: 1, imageMax: 2, videoMin: 0, videoMax: 0 },
+  veo3_fast: { imageMin: 1, imageMax: 2, videoMin: 0, videoMax: 0 },
+  'sora-2-pro-image-to-video': { imageMin: 1, imageMax: 1, videoMin: 0, videoMax: 0 },
+  'sora-2-pro-text-to-video': { imageMin: 0, imageMax: 0, videoMin: 0, videoMax: 0 },
+  'kling-2.6/image-to-video': { imageMin: 1, imageMax: 1, videoMin: 0, videoMax: 0 },
+  'kling-2.6/motion-control': { imageMin: 1, imageMax: 1, videoMin: 1, videoMax: 1 },
+};
+
+function getInputRequirementLabel(model) {
+  const r = MODEL_INPUT_REQUIREMENTS[model];
+  if (!r) return '';
+  if (r.imageMin === 0 && r.videoMin === 0) return 'Aucune (texte seul).';
+  const parts = [];
+  if (r.imageMin > 0) parts.push(r.imageMax > 1 ? `${r.imageMin}–${r.imageMax} image(s)` : '1 image');
+  if (r.videoMin > 0) parts.push(r.videoMax > 1 ? `${r.videoMin}–${r.videoMax} vidéo(s)` : '1 vidéo');
+  return parts.join(' + ');
+}
+
+function getInputError(model, imageFiles, videoFile) {
+  const r = MODEL_INPUT_REQUIREMENTS[model];
+  if (!r) return '';
+  const n = Array.isArray(imageFiles) ? imageFiles.length : (imageFiles ? 1 : 0);
+  if (r.imageMin > 0 && n < r.imageMin) return `Sélectionnez au moins ${r.imageMin} image(s) pour ce modèle.`;
+  if (r.imageMax > 0 && n > r.imageMax) return `Ce modèle accepte au maximum ${r.imageMax} image(s).`;
+  if (r.videoMin > 0 && !videoFile) return 'Sélectionnez une vidéo de référence (motion) pour ce modèle.';
+  return '';
+}
 
 const DEFAULT_IDEA_PROMPT = `You are an expert social media ad strategist for short-form video ads.
 
@@ -97,9 +128,11 @@ export default function App() {
   const [setupError, setSetupError] = useState('');
   const [setupSaving, setSetupSaving] = useState(false);
 
-  const [imageFile, setImageFile] = useState(null);
-  const [imageName, setImageName] = useState('');
+  const [imageFiles, setImageFiles] = useState([]);
   const [imageError, setImageError] = useState('');
+  const [videoFile, setVideoFile] = useState(null);
+  const [videoName, setVideoName] = useState('');
+  const [videoError, setVideoError] = useState('');
   const [optionalIdea, setOptionalIdea] = useState('');
   const [duration, setDuration] = useState(10);
   const [veoModel, setVeoModel] = useState('veo3');
@@ -124,7 +157,8 @@ export default function App() {
     if (cfg.defaultDurationSeconds) setDuration(cfg.defaultDurationSeconds);
     if (cfg.veoModel) {
       const m = cfg.veoModel;
-      setVeoModel((m === 'veo3_fast' || m === 'veo-3.1-generate') ? 'veo3_fast' : 'veo3');
+      const valid = ['veo3', 'veo3_fast', 'sora-2-pro-image-to-video', 'sora-2-pro-text-to-video', 'kling-2.6/image-to-video', MOTION_CONTROL_MODEL];
+      setVeoModel((m === 'veo3_fast' || m === 'veo-3.1-generate') ? 'veo3_fast' : valid.includes(m) ? m : 'veo3');
     }
     setHasApiKey(!!(cfg.googleApiKey && cfg.googleApiKey.trim()));
   }, []);
@@ -183,17 +217,36 @@ export default function App() {
   }
 
   async function handlePickImage() {
-    const file = await adgen.openImageFile();
+    const maxImages = MODEL_INPUT_REQUIREMENTS[veoModel]?.imageMax ?? 1;
+    const multiple = maxImages > 1;
+    const files = await adgen.openImageFile(multiple);
+    const list = multiple ? (Array.isArray(files) ? files : [files]) : (files ? [files] : []);
+    if (list.length === 0) return;
+    setImageError('');
+    const valid = [];
+    for (const file of list) {
+      const result = adgen.validateImage(file);
+      if (!result.ok) {
+        setImageError(result.error);
+        break;
+      }
+      valid.push(file);
+    }
+    if (valid.length > 0) setImageFiles(valid);
+  }
+
+  async function handlePickVideo() {
+    const file = await adgen.openVideoFile();
     if (!file) return;
-    const result = adgen.validateImage(file);
+    const result = adgen.validateVideo(file);
     if (!result.ok) {
-      setImageError(result.error);
-      setImageFile(null);
-      setImageName('');
+      setVideoError(result.error);
+      setVideoFile(null);
+      setVideoName('');
     } else {
-      setImageFile(file);
-      setImageError('');
-      setImageName(file.name);
+      setVideoFile(file);
+      setVideoError('');
+      setVideoName(file.name);
     }
   }
 
@@ -204,7 +257,7 @@ export default function App() {
   }
 
   async function handleGenerateIdeas() {
-    if (!imageFile) return;
+    if (!imageFiles.length) return;
     setIdeasLoading(true);
     setIdeasError('');
     await adgen.saveConfig({
@@ -212,11 +265,11 @@ export default function App() {
     });
     setScreen(SCREENS.ideas);
     try {
-      const imageBase64 = await fileToBase64(imageFile);
+      const imageBase64 = await fileToBase64(imageFiles[0]);
       const cfg = adgen.getConfig();
       const list = await adgen.generateIdeas({
         imageBase64,
-        mimeType: imageFile.type || 'image/jpeg',
+        mimeType: imageFiles[0].type || 'image/jpeg',
         optionalText: optionalIdea,
         durationSeconds: duration,
         ideaPrompt: ideaPrompt || undefined,
@@ -246,8 +299,12 @@ export default function App() {
 
   async function handleGenerateVideos() {
     if (selectedIndices.size === 0) return;
-    if (!imageFile) {
-      setGenerationError('Image produit manquante. Retournez à l\'écran Entrée.');
+    if (imageFiles.length === 0 && veoModel !== 'sora-2-pro-text-to-video') {
+      setGenerationError('Image(s) manquante(s). Retournez à l\'écran Entrée.');
+      return;
+    }
+    if (veoModel === MOTION_CONTROL_MODEL && !videoFile) {
+      setGenerationError('Vidéo de référence requise pour Motion Control. Retournez à l\'écran Entrée.');
       return;
     }
     await adgen.saveConfig({
@@ -264,7 +321,9 @@ export default function App() {
       setGenerationLoading(false);
       return;
     }
-    const imageBase64 = await fileToBase64(imageFile);
+    const imageBase64List = imageFiles.length > 0 ? await Promise.all(imageFiles.map((f) => fileToBase64(f))) : [];
+    const imageMimeTypes = imageFiles.map((f) => f.type || 'image/jpeg');
+    const videoBase64 = videoFile && veoModel === MOTION_CONTROL_MODEL ? await fileToBase64(videoFile) : null;
     const selectedIdeas = Array.from(selectedIndices).map((i) => ideas[i]);
     const promptToSend = videoPrompt.trim() === DEFAULT_VIDEO_PROMPT.trim() ? '' : videoPrompt;
     const statuses = selectedIdeas.map(() => ({ status: 'pending', error: null }));
@@ -279,8 +338,10 @@ export default function App() {
       });
       try {
         const result = await adgen.generateVideo({
-          imageBase64,
-          mimeType: imageFile.type || 'image/jpeg',
+          imageBase64List: imageBase64List.length ? imageBase64List : undefined,
+          imageMimeTypes: imageMimeTypes.length ? imageMimeTypes : undefined,
+          videoBase64: videoBase64 || undefined,
+          videoMimeType: videoFile?.type || undefined,
           videoPrompt: promptToSend,
           ideaConcept: formatIdeaDisplay(idea),
           index: idx,
@@ -405,10 +466,17 @@ export default function App() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Image produit</Label>
+              <Label>Image(s) produit</Label>
+              <p className="text-xs text-neutral-500">
+                {MODEL_INPUT_REQUIREMENTS[veoModel]?.imageMax > 1 ? 'Veo 3.1 : 1 ou 2 images (1ère + dernière frame).' : 'JPEG/PNG/WebP, max 10 MB.'}
+              </p>
               <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={handlePickImage}>Choisir une image</Button>
-                <span className="text-sm text-neutral-600 truncate flex-1">{imageName || '—'}</span>
+                <Button variant="outline" onClick={handlePickImage}>
+                  {MODEL_INPUT_REQUIREMENTS[veoModel]?.imageMax > 1 ? 'Choisir des images' : 'Choisir une image'}
+                </Button>
+                <span className="text-sm text-neutral-600 truncate flex-1">
+                  {imageFiles.length === 0 ? '—' : imageFiles.length === 1 ? imageFiles[0].name : `${imageFiles.length} images : ${imageFiles.map((f) => f.name).join(', ')}`}
+                </span>
               </div>
               {imageError && <p className="text-sm text-red-600">{imageError}</p>}
             </div>
@@ -431,7 +499,7 @@ export default function App() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="veo-model">Modèle Veo 3</Label>
+              <Label htmlFor="veo-model">Modèle vidéo</Label>
               <Select
                 id="veo-model"
                 value={veoModel}
@@ -439,13 +507,39 @@ export default function App() {
                   const v = e.target.value;
                   setVeoModel(v);
                   adgen.saveConfig({ veoModel: v });
+                  if (v !== MOTION_CONTROL_MODEL) {
+                    setVideoFile(null);
+                    setVideoName('');
+                    setVideoError('');
+                  }
+                  const newMax = MODEL_INPUT_REQUIREMENTS[v]?.imageMax ?? 1;
+                  if (newMax === 1 && imageFiles.length > 1) setImageFiles(imageFiles.slice(0, 1));
                 }}
               >
                 <option value="veo3">Veo 3.1 Quality</option>
                 <option value="veo3_fast">Veo 3.1 Fast</option>
+                <option value="sora-2-pro-image-to-video">Sora 2 Pro (Image)</option>
+                <option value="sora-2-pro-text-to-video">Sora 2 Pro (Text)</option>
+                <option value="kling-2.6/image-to-video">Kling 2.6 (Image)</option>
+                <option value="kling-2.6/motion-control">Kling 2.6 Motion Control</option>
               </Select>
+              <p className="text-xs text-neutral-500">Entrées requises : {getInputRequirementLabel(veoModel)}</p>
             </div>
-            <Button onClick={handleGenerateIdeas} disabled={!imageFile || ideasLoading}>
+            {veoModel === MOTION_CONTROL_MODEL && (
+              <div className="space-y-2">
+                <Label>Vidéo de référence (motion)</Label>
+                <p className="text-xs text-neutral-500">Référence pour les mouvements du personnage. MP4/MOV, 3–30 s, max 100 MB.</p>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" onClick={handlePickVideo}>Choisir une vidéo</Button>
+                  <span className="text-sm text-neutral-600 truncate flex-1">{videoName || '—'}</span>
+                </div>
+                {videoError && <p className="text-sm text-red-600">{videoError}</p>}
+              </div>
+            )}
+            {getInputError(veoModel, imageFiles, videoFile) && (
+              <p className="text-sm text-red-600" role="alert">{getInputError(veoModel, imageFiles, videoFile)}</p>
+            )}
+            <Button onClick={handleGenerateIdeas} disabled={!imageFiles.length || ideasLoading}>
               Générer les idées
             </Button>
           </CardContent>
@@ -476,11 +570,14 @@ export default function App() {
                 })}
               </div>
             )}
+            {getInputError(veoModel, imageFiles, videoFile) && (
+              <p className="text-sm text-red-600" role="alert">{getInputError(veoModel, imageFiles, videoFile)}</p>
+            )}
             <div className="flex gap-2">
               <Button variant="outline" onClick={handleBackFromIdeas}>Retour</Button>
               <Button
                 onClick={handleGenerateVideos}
-                disabled={selectedIndices.size === 0}
+                disabled={selectedIndices.size === 0 || !!getInputError(veoModel, imageFiles, videoFile)}
               >
                 Générer les vidéos
               </Button>

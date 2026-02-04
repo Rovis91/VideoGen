@@ -1,6 +1,8 @@
 const CONFIG_KEY = 'adgen_config';
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/x-matroska'];
 
 let ideasAbortController = null;
 
@@ -26,11 +28,28 @@ export function saveConfig(data) {
   return Promise.resolve();
 }
 
-export function openImageFile() {
+export function openImageFile(multiple = false) {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/jpeg,image/png,image/webp';
+    input.multiple = multiple;
+    input.style.display = 'none';
+    input.onchange = () => {
+      const files = input.files ? Array.from(input.files) : [];
+      document.body.removeChild(input);
+      resolve(multiple ? files : (files[0] || null));
+    };
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
+export function openVideoFile() {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'video/mp4,video/quicktime,.mp4,.mov';
     input.style.display = 'none';
     input.onchange = () => {
       const file = input.files?.[0];
@@ -55,6 +74,19 @@ export function validateImage(file) {
   }
   if (file.size > IMAGE_MAX_BYTES) {
     return { ok: false, error: 'File too large (max 10 MB).' };
+  }
+  return { ok: true };
+}
+
+export function validateVideo(file) {
+  if (!file || !(file instanceof File)) {
+    return { ok: false, error: 'Not a file.' };
+  }
+  if (!ALLOWED_VIDEO_TYPES.includes(file.type) && !file.name?.match(/\.(mp4|mov|mkv)$/i)) {
+    return { ok: false, error: 'Use MP4, MOV or MKV (max 100 MB).' };
+  }
+  if (file.size > VIDEO_MAX_BYTES) {
+    return { ok: false, error: 'File too large (max 100 MB).' };
   }
   return { ok: true };
 }
@@ -113,10 +145,14 @@ export function openFolder() {
 }
 
 export async function generateVideo(opts) {
-  const { imageBase64, mimeType, videoPrompt, ideaConcept, durationSeconds, index, apiKey, veoModel } = opts;
+  const { imageBase64, mimeType, imageBase64List, imageMimeTypes, videoBase64, videoMimeType, videoPrompt, ideaConcept, durationSeconds, index, apiKey, veoModel } = opts;
   const body = {
-    imageBase64,
+    imageBase64: imageBase64 || undefined,
     mimeType: mimeType || 'image/jpeg',
+    imageBase64List: imageBase64List?.length ? imageBase64List : undefined,
+    imageMimeTypes: imageMimeTypes?.length ? imageMimeTypes : undefined,
+    videoBase64: videoBase64 || undefined,
+    videoMimeType: videoMimeType || undefined,
     videoPrompt: videoPrompt || '',
     ideaConcept: ideaConcept || '',
     durationSeconds: durationSeconds ?? 8,

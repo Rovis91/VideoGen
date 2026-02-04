@@ -1,11 +1,42 @@
 const kie = require('./lib/kie');
 
 const POLL_INTERVAL_MS = 30000;
+const JOBS_POLL_INTERVAL_MS = 15000;
 const DEFAULT_MODEL = 'veo3';
-const VEO_MODELS = {
+
+const VIDEO_MODELS = {
   veo3: 'Veo 3.1 Quality',
   veo3_fast: 'Veo 3.1 Fast',
+  'sora-2-pro-image-to-video': 'Sora 2 Pro (Image)',
+  'sora-2-pro-text-to-video': 'Sora 2 Pro (Text)',
+  'kling-2.6/image-to-video': 'Kling 2.6 (Image)',
+  'kling-2.6/motion-control': 'Kling 2.6 Motion Control',
 };
+
+/**
+ * Spécification des entrées par modèle (doc KIE).
+ * Tableau: modèle | images (min–max) | vidéos (min–max) | types / contraintes
+ * -------------------------------------------------------------------------------
+ * Veo 3.1 (veo3, veo3_fast) | 0–2 | 0 | imageUrls: 1 = frame unique, 2 = 1ère+dernière frame.
+ *   REFERENCE_2_VIDEO (veo3_fast): 1–3 images. Texte seul = 0 image.
+ * Sora 2 Pro (Image)              | 1–1 | 0 | image_urls requis, 1 image (first frame). JPEG/PNG/WEBP, 10 MB.
+ * Sora 2 Pro (Text)               | 0–0 | 0 | Prompt uniquement.
+ * Kling 2.6 (Image)              | 1–1 | 0 | image_urls requis, 1 image. JPEG/PNG/WEBP, 10 MB.
+ * Kling 2.6 Motion Control       | 1–1 | 1–1 | input_urls: 1 image. video_urls: 1 vidéo (3–30 s, 100 MB). MP4/MOV/MKV.
+ */
+const MODEL_INPUTS = {
+  veo3: { image: true, video: false, imageMin: 1, imageMax: 2, videoMin: 0, videoMax: 0 },
+  veo3_fast: { image: true, video: false, imageMin: 1, imageMax: 2, videoMin: 0, videoMax: 0 },
+  'sora-2-pro-image-to-video': { image: true, video: false, imageMin: 1, imageMax: 1, videoMin: 0, videoMax: 0 },
+  'sora-2-pro-text-to-video': { image: false, video: false, imageMin: 0, imageMax: 0, videoMin: 0, videoMax: 0 },
+  'kling-2.6/image-to-video': { image: true, video: false, imageMin: 1, imageMax: 1, videoMin: 0, videoMax: 0 },
+  'kling-2.6/motion-control': { image: true, video: true, imageMin: 1, imageMax: 1, videoMin: 1, videoMax: 1 },
+};
+
+const VEO_MODEL_IDS = new Set(['veo3', 'veo3_fast']);
+function isVeoModel(model) {
+  return model && VEO_MODEL_IDS.has(model);
+}
 
 const DEFAULT_VIDEO_PROMPT_SYSTEM = `You are a video director generating a prompt for a short social media video.
 
@@ -51,32 +82,14 @@ async function ideaToVideoPrompt({ apiKey, ideaConcept, durationSeconds, systemP
   return content.trim();
 }
 
-async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, ideaConcept, index, durationSeconds, veoModel }) {
-  const optimizedPrompt = await ideaToVideoPrompt({
-    apiKey,
-    ideaConcept: ideaConcept || 'Short promotional video for the product.',
-    durationSeconds: durationSeconds ?? 8,
-    systemPromptOverride: (videoPrompt || '').trim() || undefined,
-  });
+function parseResultUrls(resultUrls) {
+  if (!resultUrls) return null;
+  const urls = typeof resultUrls === 'string' ? (() => { try { return JSON.parse(resultUrls); } catch { return resultUrls; } })() : resultUrls;
+  const first = Array.isArray(urls) ? urls[0] : urls;
+  return first || null;
+}
 
-  const imageUrl = await kie.uploadImage(apiKey, imageBase64, mimeType, `product-${Date.now()}.jpg`);
-
-  const prompt = [
-    'The attached image is the product image (image produit).',
-    'Always refer to this input image as the product image.',
-    '',
-    optimizedPrompt,
-  ].join('\n');
-
-  const model = (veoModel && VEO_MODELS[veoModel]) ? veoModel : DEFAULT_MODEL;
-  const taskId = await kie.veoGenerate(apiKey, {
-    prompt,
-    imageUrls: [imageUrl],
-    model,
-    aspect_ratio: '16:9',
-    generationType: 'FIRST_AND_LAST_FRAMES_2_VIDEO',
-  });
-
+async function runVeoFlow(apiKey, { prompt, imageUrl, model, taskId, index }) {
   let data;
   while (true) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
@@ -86,13 +99,7 @@ async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, id
       throw new Error(data.failMsg || data.msg || 'Video generation failed.');
     }
   }
-
-  const resultUrls = data.response?.resultUrls ?? data.resultUrls;
-  let videoUrl = null;
-  if (resultUrls) {
-    const urls = typeof resultUrls === 'string' ? (() => { try { return JSON.parse(resultUrls); } catch { return resultUrls; } })() : resultUrls;
-    videoUrl = Array.isArray(urls) ? urls[0] : urls;
-  }
+  let videoUrl = parseResultUrls(data.response?.resultUrls ?? data.resultUrls);
   if (!videoUrl) {
     const poll1080IntervalMs = 25000;
     const poll1080MaxAttempts = 12;
@@ -107,6 +114,136 @@ async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, id
     }
   }
   if (!videoUrl) throw new Error('Aucune vidéo dans la réponse.');
+  return videoUrl;
+}
+
+async function runJobsFlow(apiKey, taskId) {
+  let data;
+  while (true) {
+    await new Promise((r) => setTimeout(r, JOBS_POLL_INTERVAL_MS));
+    data = await kie.jobsRecordInfo(apiKey, taskId);
+    if (data.state === 'success') break;
+    if (data.state === 'fail') {
+      throw new Error(data.failMsg || data.failCode || 'Video generation failed.');
+    }
+  }
+  const resultJson = data.resultJson;
+  if (!resultJson) throw new Error('Aucune vidéo dans la réponse.');
+  const parsed = typeof resultJson === 'string' ? (() => { try { return JSON.parse(resultJson); } catch { return null; } })() : resultJson;
+  const videoUrl = parseResultUrls(parsed?.resultUrls);
+  if (!videoUrl) throw new Error('Aucune vidéo dans la réponse.');
+  return videoUrl;
+}
+
+function normalizeImageInputs(imageBase64, mimeType, imageBase64List, imageMimeTypes) {
+  if (Array.isArray(imageBase64List) && imageBase64List.length > 0) {
+    const types = Array.isArray(imageMimeTypes) ? imageMimeTypes : [];
+    return imageBase64List.map((base64, i) => ({ base64, mimeType: types[i] || 'image/jpeg' }));
+  }
+  if (imageBase64) {
+    return [{ base64: imageBase64, mimeType: mimeType || 'image/jpeg' }];
+  }
+  return [];
+}
+
+async function generateOneVideo({ apiKey, imageBase64, mimeType, imageBase64List, imageMimeTypes, videoBase64, videoMimeType, videoPrompt, ideaConcept, index, durationSeconds, veoModel }) {
+  const optimizedPrompt = await ideaToVideoPrompt({
+    apiKey,
+    ideaConcept: ideaConcept || 'Short promotional video for the product.',
+    durationSeconds: durationSeconds ?? 8,
+    systemPromptOverride: (videoPrompt || '').trim() || undefined,
+  });
+
+  const model = (veoModel && VIDEO_MODELS[veoModel]) ? veoModel : DEFAULT_MODEL;
+  const inputs = MODEL_INPUTS[model] || MODEL_INPUTS[DEFAULT_MODEL];
+  const imageInputs = normalizeImageInputs(imageBase64, mimeType, imageBase64List, imageMimeTypes);
+
+  if (inputs.imageMin > 0 && imageInputs.length < inputs.imageMin) throw new Error(`This model requires at least ${inputs.imageMin} image(s).`);
+  if (inputs.imageMax > 0 && imageInputs.length > inputs.imageMax) throw new Error(`This model accepts at most ${inputs.imageMax} image(s).`);
+
+  let taskId;
+  let videoUrl;
+
+  if (isVeoModel(model)) {
+    if (imageInputs.length === 0) throw new Error('This model requires an image.');
+    const imageUrls = await Promise.all(imageInputs.map((img, i) => kie.uploadImage(apiKey, img.base64, img.mimeType, `product-${Date.now()}-${i}.jpg`)));
+    const prompt = [
+      imageUrls.length === 2 ? 'The two attached images are the first and last frame. Generate a transition between them.' : 'The attached image is the product image (image produit). Always refer to this input image as the product image.',
+      '',
+      optimizedPrompt,
+    ].join('\n');
+    taskId = await kie.veoGenerate(apiKey, {
+      prompt,
+      imageUrls,
+      model,
+      aspect_ratio: '16:9',
+      generationType: 'FIRST_AND_LAST_FRAMES_2_VIDEO',
+    });
+    videoUrl = await runVeoFlow(apiKey, { prompt, imageUrl: imageUrls[0], model, taskId, index });
+  } else {
+    if (model === 'sora-2-pro-image-to-video') {
+      if (imageInputs.length === 0) throw new Error('This model requires an image.');
+      if (imageInputs.length > 1) throw new Error('This model accepts only one image.');
+      const img = imageInputs[0];
+      const imageUrl = await kie.uploadImage(apiKey, img.base64, img.mimeType, `product-${Date.now()}.jpg`);
+      taskId = await kie.jobsCreateTask(apiKey, {
+        model: 'sora-2-pro-image-to-video',
+        input: {
+          prompt: optimizedPrompt,
+          image_urls: [imageUrl],
+          aspect_ratio: 'landscape',
+          n_frames: (durationSeconds ?? 8) >= 12 ? '15' : '10',
+          size: 'standard',
+          remove_watermark: true,
+        },
+      });
+    } else if (model === 'sora-2-pro-text-to-video') {
+      taskId = await kie.jobsCreateTask(apiKey, {
+        model: 'sora-2-pro-text-to-video',
+        input: {
+          prompt: optimizedPrompt,
+          aspect_ratio: 'landscape',
+          n_frames: (durationSeconds ?? 8) >= 12 ? '15' : '10',
+          size: 'high',
+          remove_watermark: true,
+        },
+      });
+    } else if (model === 'kling-2.6/image-to-video') {
+      if (imageInputs.length === 0) throw new Error('This model requires an image.');
+      if (imageInputs.length > 1) throw new Error('This model accepts only one image.');
+      const img = imageInputs[0];
+      const imageUrl = await kie.uploadImage(apiKey, img.base64, img.mimeType, `product-${Date.now()}.jpg`);
+      taskId = await kie.jobsCreateTask(apiKey, {
+        model: 'kling-2.6/image-to-video',
+        input: {
+          prompt: optimizedPrompt,
+          image_urls: [imageUrl],
+          sound: false,
+          duration: (durationSeconds ?? 8) >= 8 ? '10' : '5',
+        },
+      });
+    } else if (model === 'kling-2.6/motion-control') {
+      if (imageInputs.length === 0) throw new Error('Motion Control requires an image (reference).');
+      if (imageInputs.length > 1) throw new Error('Motion Control accepts only one image.');
+      if (!inputs.video || !videoBase64) throw new Error('Motion Control requires a reference video.');
+      const img = imageInputs[0];
+      const imageUrl = await kie.uploadImage(apiKey, img.base64, img.mimeType, `ref-${Date.now()}.jpg`);
+      const refVideoUrl = await kie.uploadVideo(apiKey, videoBase64, videoMimeType || 'video/mp4', `ref-${Date.now()}.mp4`);
+      taskId = await kie.jobsCreateTask(apiKey, {
+        model: 'kling-2.6/motion-control',
+        input: {
+          prompt: optimizedPrompt || 'The character moves naturally.',
+          input_urls: [imageUrl],
+          video_urls: [refVideoUrl],
+          character_orientation: 'video',
+          mode: '720p',
+        },
+      });
+    } else {
+      throw new Error(`Unknown video model: ${model}`);
+    }
+    videoUrl = await runJobsFlow(apiKey, taskId);
+  }
 
   let downloadUrl = videoUrl;
   try {
@@ -121,4 +258,4 @@ async function generateOneVideo({ apiKey, imageBase64, mimeType, videoPrompt, id
   return { ok: true, buffer, filename: fileName };
 }
 
-module.exports = { generateOneVideo, VEO_MODELS, DEFAULT_MODEL };
+module.exports = { generateOneVideo, VIDEO_MODELS, MODEL_INPUTS, VEO_MODEL_IDS, DEFAULT_MODEL };

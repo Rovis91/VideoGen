@@ -1,4 +1,4 @@
-const { generateOneVideo } = require('../video');
+const { generateOneVideo, MODEL_INPUTS } = require('../video');
 
 function getApiKey(req) {
   const envKey = process.env.KIE_API_KEY || process.env.GOOGLE_API_KEY;
@@ -22,9 +22,19 @@ module.exports = async function handler(req, res) {
 
   try {
     const body = req.body || {};
-    const { imageBase64, mimeType, videoPrompt, ideaConcept, durationSeconds, index, veoModel } = body;
-    if (!imageBase64) {
-      return res.status(400).json({ error: 'Missing imageBase64 in body.' });
+    const { imageBase64, mimeType, imageBase64List, imageMimeTypes, videoBase64, videoMimeType, videoPrompt, ideaConcept, durationSeconds, index, veoModel } = body;
+    const model = (veoModel && MODEL_INPUTS[veoModel]) ? veoModel : 'veo3';
+    const inputs = MODEL_INPUTS[model] || MODEL_INPUTS.veo3;
+
+    const imageCount = Array.isArray(imageBase64List) && imageBase64List.length > 0 ? imageBase64List.length : (imageBase64 ? 1 : 0);
+    if (inputs.imageMin > 0 && imageCount === 0) {
+      return res.status(400).json({ error: 'This model requires at least one image. Send imageBase64 or imageBase64List.' });
+    }
+    if (inputs.imageMax > 0 && imageCount > inputs.imageMax) {
+      return res.status(400).json({ error: `This model accepts at most ${inputs.imageMax} image(s).` });
+    }
+    if (inputs.videoMin > 0 && !videoBase64) {
+      return res.status(400).json({ error: 'This model requires a reference video. Send videoBase64.' });
     }
     if (!ideaConcept && ideaConcept !== '') {
       return res.status(400).json({ error: 'Missing ideaConcept in body.' });
@@ -32,8 +42,12 @@ module.exports = async function handler(req, res) {
 
     const result = await generateOneVideo({
       apiKey,
-      imageBase64,
+      imageBase64: imageBase64 || undefined,
       mimeType: mimeType || 'image/jpeg',
+      imageBase64List: Array.isArray(imageBase64List) && imageBase64List.length > 0 ? imageBase64List : undefined,
+      imageMimeTypes: Array.isArray(imageMimeTypes) ? imageMimeTypes : undefined,
+      videoBase64: videoBase64 || undefined,
+      videoMimeType: videoMimeType || undefined,
       videoPrompt: videoPrompt || '',
       ideaConcept: ideaConcept || '',
       index: index ?? 0,
