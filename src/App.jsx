@@ -600,7 +600,7 @@ export default function App() {
             {hasApiKey && generationLoading && (
               <div className="flex items-center gap-3 rounded-md p-4 bg-neutral-50 border border-neutral-200">
                 <div className="h-6 w-6 rounded-full border-2 border-neutral-300 border-t-neutral-900 animate-spin shrink-0" aria-hidden />
-                <p className="text-sm text-neutral-700">Génération en cours… (Veo 3.1)</p>
+                <p className="text-sm text-neutral-700">Génération en cours… </p>
               </div>
             )}
             {videoStatuses.length > 0 && (

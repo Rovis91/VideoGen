@@ -135,6 +135,166 @@ async function runJobsFlow(apiKey, taskId) {
   return videoUrl;
 }
 
+const PROVIDER_VEO = 'veo';
+const PROVIDER_JOBS = 'jobs';
+
+/**
+ * Start a video job only (no waiting). Returns taskId and provider for later status/poll.
+ */
+async function startVideoJob({ apiKey, imageBase64, mimeType, imageBase64List, imageMimeTypes, videoBase64, videoMimeType, videoPrompt, ideaConcept, index, durationSeconds, veoModel }) {
+  const optimizedPrompt = await ideaToVideoPrompt({
+    apiKey,
+    ideaConcept: ideaConcept || 'Short promotional video for the product.',
+    durationSeconds: durationSeconds ?? 8,
+    systemPromptOverride: (videoPrompt || '').trim() || undefined,
+  });
+
+  const model = (veoModel && VIDEO_MODELS[veoModel]) ? veoModel : DEFAULT_MODEL;
+  const inputs = MODEL_INPUTS[model] || MODEL_INPUTS[DEFAULT_MODEL];
+  const imageInputs = normalizeImageInputs(imageBase64, mimeType, imageBase64List, imageMimeTypes);
+
+  if (inputs.imageMin > 0 && imageInputs.length < inputs.imageMin) throw new Error(`This model requires at least ${inputs.imageMin} image(s).`);
+  if (inputs.imageMax > 0 && imageInputs.length > inputs.imageMax) throw new Error(`This model accepts at most ${inputs.imageMax} image(s).`);
+
+  let taskId;
+
+  if (isVeoModel(model)) {
+    if (imageInputs.length === 0) throw new Error('This model requires an image.');
+    const imageUrls = await Promise.all(imageInputs.map((img, i) => kie.uploadImage(apiKey, img.base64, img.mimeType, `product-${Date.now()}-${i}.jpg`)));
+    const prompt = [
+      imageUrls.length === 2 ? 'The two attached images are the first and last frame. Generate a transition between them.' : 'The attached image is the product image (image produit). Always refer to this input image as the product image.',
+      '',
+      optimizedPrompt,
+    ].join('\n');
+    taskId = await kie.veoGenerate(apiKey, {
+      prompt,
+      imageUrls,
+      model,
+      aspect_ratio: '16:9',
+      generationType: 'FIRST_AND_LAST_FRAMES_2_VIDEO',
+    });
+    return { taskId, provider: PROVIDER_VEO };
+  }
+
+  if (model === 'sora-2-pro-image-to-video') {
+    if (imageInputs.length === 0) throw new Error('This model requires an image.');
+    if (imageInputs.length > 1) throw new Error('This model accepts only one image.');
+    const img = imageInputs[0];
+    const imageUrl = await kie.uploadImage(apiKey, img.base64, img.mimeType, `product-${Date.now()}.jpg`);
+    taskId = await kie.jobsCreateTask(apiKey, {
+      model: 'sora-2-pro-image-to-video',
+      input: {
+        prompt: optimizedPrompt,
+        image_urls: [imageUrl],
+        aspect_ratio: 'landscape',
+        n_frames: (durationSeconds ?? 8) >= 12 ? '15' : '10',
+        size: 'standard',
+        remove_watermark: true,
+      },
+    });
+  } else if (model === 'sora-2-pro-text-to-video') {
+    taskId = await kie.jobsCreateTask(apiKey, {
+      model: 'sora-2-pro-text-to-video',
+      input: {
+        prompt: optimizedPrompt,
+        aspect_ratio: 'landscape',
+        n_frames: (durationSeconds ?? 8) >= 12 ? '15' : '10',
+        size: 'high',
+        remove_watermark: true,
+      },
+    });
+  } else if (model === 'kling-2.6/image-to-video') {
+    if (imageInputs.length === 0) throw new Error('This model requires an image.');
+    if (imageInputs.length > 1) throw new Error('This model accepts only one image.');
+    const img = imageInputs[0];
+    const imageUrl = await kie.uploadImage(apiKey, img.base64, img.mimeType, `product-${Date.now()}.jpg`);
+    taskId = await kie.jobsCreateTask(apiKey, {
+      model: 'kling-2.6/image-to-video',
+      input: {
+        prompt: optimizedPrompt,
+        image_urls: [imageUrl],
+        sound: false,
+        duration: (durationSeconds ?? 8) >= 8 ? '10' : '5',
+      },
+    });
+  } else if (model === 'kling-2.6/motion-control') {
+    if (imageInputs.length === 0) throw new Error('Motion Control requires an image (reference).');
+    if (imageInputs.length > 1) throw new Error('Motion Control accepts only one image.');
+    if (!inputs.video || !videoBase64) throw new Error('Motion Control requires a reference video.');
+    const img = imageInputs[0];
+    const imageUrl = await kie.uploadImage(apiKey, img.base64, img.mimeType, `ref-${Date.now()}.jpg`);
+    const refVideoUrl = await kie.uploadVideo(apiKey, videoBase64, videoMimeType || 'video/mp4', `ref-${Date.now()}.mp4`);
+    taskId = await kie.jobsCreateTask(apiKey, {
+      model: 'kling-2.6/motion-control',
+      input: {
+        prompt: optimizedPrompt || 'The character moves naturally.',
+        input_urls: [imageUrl],
+        video_urls: [refVideoUrl],
+        character_orientation: 'video',
+        mode: '720p',
+      },
+    });
+  } else {
+    throw new Error(`Unknown video model: ${model}`);
+  }
+  return { taskId, provider: PROVIDER_JOBS };
+}
+
+/**
+ * Get current job status (one shot, no polling). status: 'pending' | 'success' | 'fail'.
+ * When success, videoUrl is set for use by getVideoJobResult.
+ */
+async function getVideoJobStatus(apiKey, taskId, provider) {
+  if (provider === PROVIDER_VEO) {
+    const data = await kie.veoRecordInfo(apiKey, taskId);
+    if (data.successFlag === 1) {
+      let videoUrl = parseResultUrls(data.response?.resultUrls ?? data.resultUrls);
+      if (!videoUrl) {
+        try {
+          videoUrl = await kie.veoGet1080pVideo(apiKey, taskId);
+        } catch (_) {}
+      }
+      return { status: 'success', videoUrl: videoUrl || null };
+    }
+    if (data.successFlag === 2 || data.successFlag === 3) {
+      return { status: 'fail', error: data.failMsg || data.msg || 'Video generation failed.' };
+    }
+    return { status: 'pending' };
+  }
+  if (provider === PROVIDER_JOBS) {
+    const data = await kie.jobsRecordInfo(apiKey, taskId);
+    if (data.state === 'success') {
+      const resultJson = data.resultJson;
+      const parsed = typeof resultJson === 'string' ? (() => { try { return JSON.parse(resultJson); } catch { return null; } })() : resultJson;
+      const videoUrl = parseResultUrls(parsed?.resultUrls);
+      return { status: 'success', videoUrl: videoUrl || null };
+    }
+    if (data.state === 'fail') {
+      return { status: 'fail', error: data.failMsg || data.failCode || 'Video generation failed.' };
+    }
+    return { status: 'pending' };
+  }
+  throw new Error(`Unknown provider: ${provider}`);
+}
+
+/**
+ * Fetch the video buffer once job is success. Uses getVideoJobStatus then download.
+ */
+async function getVideoJobResult(apiKey, taskId, provider, index = 0) {
+  const { status, videoUrl, error } = await getVideoJobStatus(apiKey, taskId, provider);
+  if (status === 'fail') throw new Error(error || 'Video generation failed.');
+  if (status === 'pending' || !videoUrl) throw new Error('Video not ready yet.');
+  let downloadUrl = videoUrl;
+  try {
+    downloadUrl = await kie.getDownloadUrl(apiKey, videoUrl);
+  } catch (_) {}
+  const res = await fetch(downloadUrl);
+  if (!res.ok) throw new Error(`Video download failed: ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const fileName = `ad_${index + 1}.mp4`;
+  return { buffer, filename: fileName };
+}
+
 function normalizeImageInputs(imageBase64, mimeType, imageBase64List, imageMimeTypes) {
   if (Array.isArray(imageBase64List) && imageBase64List.length > 0) {
     const types = Array.isArray(imageMimeTypes) ? imageMimeTypes : [];
@@ -258,4 +418,15 @@ async function generateOneVideo({ apiKey, imageBase64, mimeType, imageBase64List
   return { ok: true, buffer, filename: fileName };
 }
 
-module.exports = { generateOneVideo, VIDEO_MODELS, MODEL_INPUTS, VEO_MODEL_IDS, DEFAULT_MODEL };
+module.exports = {
+  generateOneVideo,
+  startVideoJob,
+  getVideoJobStatus,
+  getVideoJobResult,
+  VIDEO_MODELS,
+  MODEL_INPUTS,
+  VEO_MODEL_IDS,
+  DEFAULT_MODEL,
+  PROVIDER_VEO,
+  PROVIDER_JOBS,
+};

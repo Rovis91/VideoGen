@@ -45,6 +45,17 @@ npm run preview
 
 L’interface vérifie ces exigences : si les fichiers ne correspondent pas au modèle sélectionné, un message d’erreur s’affiche et le bouton « Générer les vidéos » est désactivé.
 
+## Test all models (script)
+
+From the project root, with an **image** (and optionally a **video** for Motion Control) in the root folder:
+
+```powershell
+$env:KIE_API_KEY = "your-kie-api-key"
+npm run test:models
+```
+
+The script generates one short video per model and saves them in `test-output/` (e.g. `test-output/veo3.mp4`, `test-output/kling-2.6-motion-control.mp4`). Optional env: `IMAGE_PATH`, `VIDEO_PATH` to override input files.
+
 ## First run
 
 1. On **Configuration**: paste your **KIE API key** ([kie.ai/api-key](https://kie.ai/api-key)) and click Save.

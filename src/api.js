@@ -144,8 +144,21 @@ export function openFolder() {
   // No-op in web; use per-video download links instead.
 }
 
+const POLL_INTERVAL_MS = 15000;
+const POLL_MAX_ATTEMPTS = 60;
+
+function apiError(res, data) {
+  const msg = res.status === 404
+    ? 'API non disponible en local. Lancez "vercel dev" pour tester.'
+    : (data?.error || `API error ${res.status}`);
+  return new Error(msg);
+}
+
 export async function generateVideo(opts) {
   const { imageBase64, mimeType, imageBase64List, imageMimeTypes, videoBase64, videoMimeType, videoPrompt, ideaConcept, durationSeconds, index, apiKey, veoModel } = opts;
+  const baseUrl = getBaseUrl();
+  const key = (apiKey || '').trim();
+
   const body = {
     imageBase64: imageBase64 || undefined,
     mimeType: mimeType || 'image/jpeg',
@@ -157,27 +170,58 @@ export async function generateVideo(opts) {
     ideaConcept: ideaConcept || '',
     durationSeconds: durationSeconds ?? 8,
     index: index ?? 0,
-    apiKey: apiKey || undefined,
+    apiKey: key || undefined,
     veoModel: veoModel || undefined,
   };
-  const res = await fetch(`${getBaseUrl()}/api/video`, {
+
+  const startRes = await fetch(`${baseUrl}/api/video`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    const msg = res.status === 404
-      ? 'API non disponible en local. Lancez "vercel dev" pour tester.'
-      : (data.error || `API error ${res.status}`);
-    throw new Error(msg);
+  if (!startRes.ok) {
+    const data = await startRes.json().catch(() => ({}));
+    throw apiError(startRes, data);
   }
-  const blob = await res.blob();
-  const disposition = res.headers.get('Content-Disposition');
-  const match = disposition && disposition.match(/filename="?([^";]+)"?/);
-  const filename = match ? match[1] : `ad_${(opts.index ?? 0) + 1}.mp4`;
-  const url = URL.createObjectURL(blob);
-  return { ok: true, url, filename };
+  const { taskId, provider } = await startRes.json();
+  if (!taskId || !provider) {
+    throw new Error('Invalid start response: missing taskId or provider.');
+  }
+
+  const params = new URLSearchParams({ taskId, provider });
+  if (key) params.set('apiKey', key);
+
+  for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+    const statusRes = await fetch(`${baseUrl}/api/video?${params.toString()}`);
+    if (!statusRes.ok) {
+      const data = await statusRes.json().catch(() => ({}));
+      throw apiError(statusRes, data);
+    }
+    const statusData = await statusRes.json();
+    if (statusData.status === 'success') {
+      const downloadParams = new URLSearchParams({ taskId, provider, index: String(index ?? 0) });
+      if (key) downloadParams.set('apiKey', key);
+      const downloadRes = await fetch(`${baseUrl}/api/video/download?${downloadParams.toString()}`);
+      if (!downloadRes.ok) {
+        const data = await downloadRes.json().catch(() => ({}));
+        throw apiError(downloadRes, data);
+      }
+      const blob = await downloadRes.blob();
+      const disposition = downloadRes.headers.get('Content-Disposition');
+      const match = disposition && disposition.match(/filename="?([^";]+)"?/);
+      const filename = match ? match[1] : `ad_${(index ?? 0) + 1}.mp4`;
+      const url = URL.createObjectURL(blob);
+      return { ok: true, url, filename };
+    }
+    if (statusData.status === 'fail') {
+      throw new Error(statusData.error || 'Video generation failed.');
+    }
+  }
+
+  throw new Error('Video generation timed out. Try again later.');
 }
 
 export async function testApiKey(apiKey) {

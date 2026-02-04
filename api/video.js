@@ -1,21 +1,46 @@
-const { generateOneVideo, MODEL_INPUTS } = require('../video');
+const { startVideoJob, getVideoJobStatus, MODEL_INPUTS } = require('../video');
 
-function getApiKey(req) {
+function getApiKey(req, fromBody = false) {
   const envKey = process.env.KIE_API_KEY || process.env.GOOGLE_API_KEY;
   if (envKey && envKey.trim()) return envKey.trim();
-  const body = req.body || {};
-  const key = (body.apiKey || '').trim();
+  if (fromBody && req.body) {
+    const key = (req.body.apiKey || '').trim();
+    if (key) return key;
+  }
+  const q = req.query || {};
+  const key = (q.apiKey || '').trim();
   if (key) return key;
   return null;
 }
 
 module.exports = async function handler(req, res) {
+  if (req.method === 'GET') {
+    const apiKey = getApiKey(req);
+    if (!apiKey) {
+      return res.status(400).json({ error: 'No API key. Send apiKey in query.' });
+    }
+    const { taskId, provider } = req.query || {};
+    if (!taskId || !provider) {
+      return res.status(400).json({ error: 'Missing taskId and provider in query.' });
+    }
+    if (provider !== 'veo' && provider !== 'jobs') {
+      return res.status(400).json({ error: 'provider must be "veo" or "jobs".' });
+    }
+    try {
+      const result = await getVideoJobStatus(apiKey, taskId, provider);
+      return res.status(200).json(result);
+    } catch (e) {
+      const message = e.message || 'Status check failed.';
+      return res.status(500).json({ error: message });
+    }
+  }
+
   if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
+    res.setHeader('Allow', 'GET, POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const apiKey = getApiKey(req);
+  const apiKey = getApiKey(req, true);
   if (!apiKey) {
     return res.status(400).json({ error: 'No API key. Set KIE_API_KEY or send apiKey in body.' });
   }
@@ -40,7 +65,7 @@ module.exports = async function handler(req, res) {
       return res.status(400).json({ error: 'Missing ideaConcept in body.' });
     }
 
-    const result = await generateOneVideo({
+    const result = await startVideoJob({
       apiKey,
       imageBase64: imageBase64 || undefined,
       mimeType: mimeType || 'image/jpeg',
@@ -55,11 +80,9 @@ module.exports = async function handler(req, res) {
       veoModel: veoModel || undefined,
     });
 
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-    return res.status(200).send(result.buffer);
+    return res.status(200).json({ taskId: result.taskId, provider: result.provider });
   } catch (e) {
-    const message = e.message || 'Failed to generate video.';
+    const message = e.message || 'Failed to start video job.';
     const status = message.includes('API key') ? 401 : 500;
     return res.status(status).json({ error: message });
   }
