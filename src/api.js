@@ -1,5 +1,7 @@
 const CONFIG_KEY = 'adgen_config';
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+/** Keep ideas request body under Vercel 4.5 MB limit (base64 ~1.37× file size + JSON). */
+export const IDEAS_MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/x-matroska'];
@@ -124,9 +126,9 @@ export async function generateIdeas(opts) {
   ideasAbortController = null;
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    const msg = res.status === 404
-      ? 'API non disponible en local. Lancez "vercel dev" pour tester.'
-      : (data.error || `API error ${res.status}`);
+    let msg = data?.error || `API error ${res.status}`;
+    if (res.status === 404) msg = 'API non disponible en local. Lancez "vercel dev" pour tester.';
+    if (res.status === 413) msg = 'Image or data too large (host limit 4.5 MB). Use an image under 3 MB or shorten the custom prompt.';
     throw new Error(msg);
   }
   const data = await res.json();

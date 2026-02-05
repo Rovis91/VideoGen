@@ -7,7 +7,7 @@ import { Select } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import * as adgen from './api';
-import { fileToBase64 } from './api';
+import { fileToBase64, IDEAS_MAX_IMAGE_BYTES } from './api';
 
 const SCREENS = { setup: 'setup', input: 'input', ideas: 'ideas', generation: 'generation' };
 const MOTION_CONTROL_MODEL = 'kling-2.6/motion-control';
@@ -258,6 +258,10 @@ export default function App() {
 
   async function handleGenerateIdeas() {
     if (!imageFiles.length) return;
+    if (imageFiles[0].size > IDEAS_MAX_IMAGE_BYTES) {
+      setIdeasError('Image too large for idea generation (max 3 MB). Resize or compress the image to avoid server limit.');
+      return;
+    }
     setIdeasLoading(true);
     setIdeasError('');
     await adgen.saveConfig({
