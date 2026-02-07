@@ -4,6 +4,11 @@ const POLL_INTERVAL_MS = 30000;
 const JOBS_POLL_INTERVAL_MS = 15000;
 const DEFAULT_MODEL = 'veo3';
 
+/**
+ * Video models – Kie.ai API (doc-backed).
+ * - Veo: POST /api/v1/veo/generate → GET record-info, get-1080p-video (docs.kie.ai/veo3-api/quickstart).
+ * - Jobs: POST /api/v1/jobs/createTask → GET recordInfo (docs.kie.ai/market/common/get-task-detail).
+ */
 const VIDEO_MODELS = {
   veo3: 'Veo 3.1 Quality',
   veo3_fast: 'Veo 3.1 Fast',
@@ -14,15 +19,12 @@ const VIDEO_MODELS = {
 };
 
 /**
- * Spécification des entrées par modèle (doc KIE).
- * Tableau: modèle | images (min–max) | vidéos (min–max) | types / contraintes
- * -------------------------------------------------------------------------------
- * Veo 3.1 (veo3, veo3_fast) | 0–2 | 0 | imageUrls: 1 = frame unique, 2 = 1ère+dernière frame.
- *   REFERENCE_2_VIDEO (veo3_fast): 1–3 images. Texte seul = 0 image.
- * Sora 2 Pro (Image)              | 1–1 | 0 | image_urls requis, 1 image (first frame). JPEG/PNG/WEBP, 10 MB.
- * Sora 2 Pro (Text)               | 0–0 | 0 | Prompt uniquement.
- * Kling 2.6 (Image)              | 1–1 | 0 | image_urls requis, 1 image. JPEG/PNG/WEBP, 10 MB.
- * Kling 2.6 Motion Control       | 1–1 | 1–1 | input_urls: 1 image. video_urls: 1 vidéo (3–30 s, 100 MB). MP4/MOV/MKV.
+ * Input requirements per model (Kie docs).
+ * Veo: docs.kie.ai/veo3-api/generate-veo-3-video (imageUrls 1–2, generationType FIRST_AND_LAST_FRAMES_2_VIDEO).
+ * Sora Pro Image: docs.kie.ai/market/sora2/sora-2-pro-image-to-video (prompt, image_urls[], aspect_ratio, n_frames, size, remove_watermark).
+ * Sora Pro Text: docs.kie.ai/market/sora2/sora-2-pro-text-to-video (prompt, aspect_ratio, n_frames, size, remove_watermark).
+ * Kling 2.6 Image: docs.kie.ai/market/kling/image-to-video (prompt, image_urls[], sound, duration "5"|"10").
+ * Kling 2.6 Motion: docs.kie.ai/market/kling/motion-control (prompt, input_urls[], video_urls[], mode "720p", character_orientation).
  */
 const MODEL_INPUTS = {
   veo3: { image: true, video: false, imageMin: 1, imageMax: 2, videoMin: 0, videoMax: 0 },
@@ -124,7 +126,7 @@ async function runJobsFlow(apiKey, taskId) {
     data = await kie.jobsRecordInfo(apiKey, taskId);
     if (data.state === 'success') break;
     if (data.state === 'fail') {
-      throw new Error(data.failMsg || data.failCode || 'Video generation failed.');
+      throw new Error(data.failMsg ?? data.failCode ?? 'Video generation failed.');
     }
   }
   const resultJson = data.resultJson;
@@ -270,7 +272,7 @@ async function getVideoJobStatus(apiKey, taskId, provider) {
       return { status: 'success', videoUrl: videoUrl || null };
     }
     if (data.state === 'fail') {
-      return { status: 'fail', error: data.failMsg || data.failCode || 'Video generation failed.' };
+      return { status: 'fail', error: data.failMsg ?? data.failCode ?? 'Video generation failed.' };
     }
     return { status: 'pending' };
   }

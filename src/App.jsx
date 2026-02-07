@@ -250,12 +250,6 @@ export default function App() {
     }
   }
 
-  function handleDurationChange(e) {
-    const v = parseInt(e.target.value, 10);
-    setDuration(v);
-    adgen.saveConfig({ defaultDurationSeconds: v });
-  }
-
   async function handleGenerateIdeas() {
     if (!imageFiles.length) return;
     if (imageFiles[0].size > IDEAS_MAX_IMAGE_BYTES) {
@@ -495,12 +489,21 @@ export default function App() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="duration">Durée vidéo (secondes)</Label>
-              <Select id="duration" value={duration} onChange={handleDurationChange}>
-                <option value={5}>5</option>
-                <option value={10}>10</option>
-                <option value={15}>15</option>
-                <option value={20}>20</option>
-              </Select>
+              <Input
+                id="duration"
+                type="number"
+                min={5}
+                max={30}
+                value={duration}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!Number.isNaN(v)) {
+                    const clamped = Math.min(30, Math.max(5, v));
+                    setDuration(clamped);
+                    adgen.saveConfig({ defaultDurationSeconds: clamped });
+                  }
+                }}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="veo-model">Modèle vidéo</Label>
